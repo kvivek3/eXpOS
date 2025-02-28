@@ -1,0 +1,77 @@
+alias userSP R0;
+SP=userSP;
+alias currentPID R1;
+currentPID=[SYSTEM_STATUS_TABLE+1];
+
+//switching to kernel stack
+[PROCESS_TABLE+currentPID*16+13]=SP;
+SP=[PROCESS_TABLE+currentPID*16+11]*512-1;
+
+[PROCESS_TABLE+currentPID*16+9]=21;
+
+//if the current process is not the shell (PID=1) or the currentuser is not the root user, return -1;
+if(currentPID!=1||[PROCESS_TABLE+currentPID*16+3]!=1) then
+	SP=userSP;
+	[PROCESS_TABLE+currentPID*16+9]=0;
+	[[PTBR+2*((userSP-1)/512)]*512+(userSP-1)%512]=-1;
+	ireturn;
+endif;
+
+//invoking kill all function of process manager module
+multipush(R0,R1);
+R1=5;
+R2=[SYSTEM_STATUS_TABLE+1];
+call MOD_1;
+multipop(R0,R1);
+
+//storing inodetable(59,3), usertable(60,4),diskfreelist(61,2),rootfile(62,5)
+multipush(R0,R1);
+R2=currentPID;
+R1=1;
+R3=59;
+R4=3;
+call MOD_4;
+multipop(R0,R1);
+
+multipush(R0,R1);
+R2=currentPID;
+R1=1;
+R3=60;
+R4=4;
+call MOD_4;
+multipop(R0,R1);
+
+multipush(R0,R1);
+R2=currentPID;
+R1=1;
+R3=61;
+R4=2;
+call MOD_4;
+multipop(R0,R1);
+
+multipush(R0,R1);
+R2=currentPID;
+R1=1;
+R3=62;
+R4=5;
+call MOD_4;
+multipop(R0,R1);
+
+//storing buffer cache back to disk block
+alias iter R5;
+iter=0;
+while(iter<4) do
+	//if dirty bit is set
+	if([BUFFER_TABLE+4*iter+1]==1) then
+		multipush(R0,R1,R5);
+		R2=currentPID;
+		R1=1;
+		R3=71+iter;
+		R4=[BUFFER_TABLE+4*iter];
+		call MOD_4;
+		multipop(R0,R1,R5);
+	endif;
+	iter=iter+1;
+endwhile;
+
+halt;

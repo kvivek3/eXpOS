@@ -1,0 +1,108 @@
+alias userSP R0;
+userSP=SP;
+alias currentPID R1;
+currentPID=[SYSTEM_STATUS_TABLE+1];
+alias SysCallNum R2;
+SysCallNum=[[PTBR+2*((userSP-5)/512)]*512+(userSP-5)%512];
+
+//switching to kernel stack
+[PROCESS_TABLE+currentPID*16+13]=SP;
+SP=[PROCESS_TABLE+currentPID*16+11]*512-1;
+
+//-----------------------------------OPEN_SYSTEM_CALL-------------------------------------
+if(SysCallNum==2) then
+
+	[PROCESS_TABLE+currentPID*16+9]=2;
+	alias filename R3;
+	filename=[[PTBR+2*((userSP-4)/512)]*512+(userSP-4)%512];
+
+	alias pprt R4;
+	pprt=[PROCESS_TABLE+currentPID*16+11]*512+496;
+	alias iter R5;
+	alias index R6;
+	index=-1;
+	iter=0;
+	while(iter<8) do
+		if([pprt+2*iter]==-1) then
+			index=iter;
+			break;
+		endif;
+		iter=iter+1;
+	endwhile;
+
+	//if no entry is free, i.e. process has reached its limit of resources, return -3
+	if(index==-1) then
+		[[PTBR+2*((userSP-1)/512)]*512+(userSP-1)%512]=-3;
+		SP=userSP;
+		[PROCESS_TABLE+currentPID*16+9]=0;
+		ireturn;
+	endif;
+
+	alias ofti R7;    //OPEN FILE TABLE INDEX
+	//invoking open function of file manager module to get the open file table entry
+	multipush(R0,R1,R2,R3,R4,R5,R6);
+	R1=3;
+	R2=filename;
+	call MOD_3;	
+	ofti=R0;
+	multipop(R0,R1,R2,R3,R4,R5,R6);
+
+	//if open fails, return value will be -1 or -2 from open function, if file is not found or not a data file or root file, it returns -1 and if no free entry is found in open file table , it returns -2
+	//return the same values if open fails
+	if(ofti==-1||ofti==-2) then
+		[[PTBR+2*((userSP-1)/512)]*512+(userSP-1)%512]=ofti;
+		SP=userSP;
+		[PROCESS_TABLE+currentPID*16+9]=0;
+		ireturn;
+	endif;
+	[pprt+2*index]=0;
+	[pprt+2*index+1]=ofti;
+	SP=userSP;
+	[PROCESS_TABLE+currentPID*16+9]=0;
+	[[PTBR+2*((userSP-1)/512)]*512+(userSP-1)%512]=index;
+	ireturn;
+endif;
+
+//---------------------------------------------CLOSE_SYSTEM_CALL----------------------------------------------
+if(SysCallNum==3) then
+
+	[PROCESS_TABLE+currentPID*16+9]=3;
+
+	alias file_desc R3;
+	file_desc=[[PTBR+2*((userSP-4)/512)]*512+(userSP-4)%512];
+	if(file_desc<0||file_desc>7) then
+		[[PTBR+2*((userSP-1)/512)]*512+(userSP-1)%512]=-1;
+		SP=userSP;
+		[PROCESS_TABLE+currentPID*16+9]=0;
+		ireturn;
+	endif;
+
+	alias pprt R4;
+	pprt=[PROCESS_TABLE+currentPID*16+11]*512+496;
+	if([pprt+2*file_desc]!=0) then
+		[[PTBR+2*((userSP-1)/512)]*512+(userSP-1)%512]=-1;
+		SP=userSP;
+		[PROCESS_TABLE+currentPID*16+9]=0;
+		ireturn;
+	endif;
+	alias ofti R5;
+	ofti=[pprt+2*file_desc+1];
+
+	//calling close function of file manager module
+	multipush(R0,R1,R2,R3,R4,R5);
+	R1=4;
+	R2=ofti;
+	call MOD_3;
+	multipop(R0,R1,R2,R3,R4,R5);
+
+	//invalidating the per process resource table entry
+	[pprt+2*file_desc]=-1;
+	[pprt+2*file_desc+1]=-1;
+	SP=userSP;
+	[PROCESS_TABLE+currentPID*16+9]=0;
+	[[PTBR+2*((userSP-1)/512)]*512+(userSP-1)%512]=0;
+	ireturn;
+endif;
+
+
+

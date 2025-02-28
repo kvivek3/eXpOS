@@ -1,0 +1,85 @@
+alias userSP R0;
+alias SysCallNum R1;
+alias currentPID R2;
+
+userSP=SP;
+currentPID=[SYSTEM_STATUS_TABLE+1];
+SP=[PROCESS_TABLE+currentPID*16+11]*512-1;
+SysCallNum=[[PTBR+2*((userSP-5)/512)]*512+(userSP-5)%512];
+
+//-------------------------SemLock_System_Call--------------------------------------
+if(SysCallNum==19) then
+	[PROCESS_TABLE+currentPID*16+9]=19;
+	alias sema_descriptor R3;
+	alias pprt R4;
+	pprt=[PROCESS_TABLE+currentPID*16+11]*512+496;
+	sema_descriptor=[[PTBR+2*((userSP-4)/512)]*512+(userSP-4)%512];
+	if(sema_descriptor<0||sema_descriptor>7||[pprt+2*sema_descriptor]!=1) then
+		[[PTBR+2*((userSP-1)/512)]*512+(userSP-1)%512]=-1;
+		SP=userSP;
+		[PROCESS_TABLE+currentPID*16+9]=0;
+		ireturn;
+	endif;
+	alias sem_table_index R5;
+	sem_table_index=[pprt+2*sema_descriptor+1];
+	while([SEMAPHORE_TABLE+4*sem_table_index]!=-1) do
+		[PROCESS_TABLE+currentPID*16+4]=WAIT_SEMAPHORE;
+		[PROCESS_TABLE+currentPID*16+5]=sem_table_index;
+		multipush(R0,R1,R2,R3,R4,R5);
+		call MOD_5;
+		multipop(R0,R1,R2,R3,R4,R5);
+	endwhile;
+
+	//changing locking pid
+	[SEMAPHORE_TABLE+4*sem_table_index]=currentPID;
+	SP=userSP;
+	[PROCESS_TABLE+currentPID*16+9]=0;
+	[[PTBR+2*((userSP-1)/512)]*512+(userSP-1)%512]=0;
+	ireturn;
+endif;
+//-------------------semunlock_system_call-------------------------------------------------
+if(SysCallNum==20) then
+	[PROCESS_TABLE+currentPID*16+9]=20;
+	alias pprt R3;
+	alias sema_descriptor R4;
+	sema_descriptor=[[PTBR+2*((userSP-4)/512)]*512+(userSP-4)%512];
+	pprt=[PROCESS_TABLE+currentPID*16+11]*512+496;
+
+	//the descriptor should be in the range from 0 to 7 and corresponding resource entry should be 1 (defined for semaphore)
+	if(sema_descriptor<0||sema_descriptor>7||[pprt+2*sema_descriptor]!=1) then
+		[[PTBR+2*((userSP-1)/512)]*512+(userSP-1)%512]=-1;
+		[PROCESS_TABLE+currentPID*16+9]=0;
+		SP=userSP;
+		ireturn;
+	endif;
+	alias sem_table_index R5;
+	sem_table_index=[pprt+2*sema_descriptor+1];
+
+	//checking if the semaphore is locked
+	if([SEMAPHORE_TABLE+4*sem_table_index]!=-1) then
+		
+		//if the semaphore is not locked by the current process return -2
+		// the first entry of semaphore table store pid of the process locking that semaphore
+		if([SEMAPHORE_TABLE+4*sem_table_index]!=currentPID) then
+			[[PTBR+2*((userSP-1)/512)]*512+(userSP-1)%512]=-2;
+                	[PROCESS_TABLE+currentPID*16+9]=0;
+                	SP=userSP;
+                	ireturn;
+       		endif;
+		[SEMAPHORE_TABLE+4*sem_table_index]=-1;
+		//waking up other process waiting to lock this semaphore
+		alias iter R6;
+		iter=0;
+		while(iter<16) do
+			if(([PROCESS_TABLE+iter*16+4]==WAIT_SEMAPHORE)&&([PROCESS_TABLE+iter*16+5]==sem_table_index)) then
+				[PROCESS_TABLE+iter*16+4]=READY;
+				[PROCESS_TABLE+iter*16+5]=-1;
+			endif;
+			iter=iter+1;
+		endwhile;
+	endif;
+	SP=userSP;
+	[PROCESS_TABLE+currentPID*16+9]=0;
+	[[PTBR+2*((userSP-1)/512)]*512+(userSP-1)%512]=0;
+	ireturn;
+endif;

@@ -1,0 +1,184 @@
+alias userSP R0;
+userSP=SP;
+alias currentPID R1;
+currentPID=[SYSTEM_STATUS_TABLE+1];
+alias SysCallNum R2;
+SysCallNum=[[PTBR+2*((userSP-5)/512)]*512+(userSP-5)%512];
+
+//switching to kernel stack
+[PROCESS_TABLE+currentPID*16+13]=SP;
+SP=[PROCESS_TABLE+currentPID*16+11]*512-1;
+alias ret_add R13;
+ret_add=[PTBR+2*((userSP-1)/512)]*512+(userSP-1)%512;
+
+//-----------------------------------OPEN_SYSTEM_CALL-------------------------------------
+if(SysCallNum==2) then
+
+	[PROCESS_TABLE+currentPID*16+9]=2;
+	alias filename R3;
+	filename=[[PTBR+2*((userSP-4)/512)]*512+(userSP-4)%512];
+
+	alias pprt R4;
+	pprt=[PROCESS_TABLE+currentPID*16+11]*512+496;
+	alias iter R5;
+	alias index R6;
+	index=-1;
+	iter=0;
+	while(iter<8) do
+		if([pprt+2*iter]==-1) then
+			index=iter;
+			break;
+		endif;
+		iter=iter+1;
+	endwhile;
+
+	//if no entry is free, i.e. process has reached its limit of resources, return -3
+	if(index==-1) then
+		[ret_add]=-3;
+		SP=userSP;
+		[PROCESS_TABLE+currentPID*16+9]=0;
+		ireturn;
+	endif;
+
+	alias ofti R7;    //OPEN FILE TABLE INDEX
+	//invoking open function of file manager module to get the open file table entry
+	multipush(R0,R1,R2,R3,R4,R5,R6,R13);
+	R1=3;
+	R2=filename;
+	call MOD_3;	
+	ofti=R0;
+	multipop(R0,R1,R2,R3,R4,R5,R6,R13);
+
+	//if open fails, return value will be -1 or -2 from open function, if file is not found or not a data file or root file, it returns -1 and if no free entry is found in open file table , it returns -2
+	//return the same values if open fails
+	if(ofti==-1||ofti==-2) then
+		[ret_add]=ofti;
+		SP=userSP;
+		[PROCESS_TABLE+currentPID*16+9]=0;
+		ireturn;
+	endif;
+	[pprt+2*index]=0;
+	[pprt+2*index+1]=ofti;
+	SP=userSP;
+	[PROCESS_TABLE+currentPID*16+9]=0;
+	[ret_add]=index;
+	ireturn;
+endif;
+
+//---------------------------------------------CLOSE_SYSTEM_CALL----------------------------------------------
+if(SysCallNum==3) then
+
+	[PROCESS_TABLE+currentPID*16+9]=3;
+
+	alias file_desc R3;
+	file_desc=[[PTBR+2*((userSP-4)/512)]*512+(userSP-4)%512];
+
+	alias pprt R4;
+	pprt=[PROCESS_TABLE+currentPID*16+11]*512+496;
+
+	if(file_desc<0||file_desc>7||[pprt+2*file_desc]!=0) then
+		[ret_add]=-1;
+		SP=userSP;
+		[PROCESS_TABLE+currentPID*16+9]=0;
+		ireturn;
+	endif;
+	alias ofti R5;
+	ofti=[pprt+2*file_desc+1];
+
+	//calling close function of file manager module
+	multipush(R0,R1,R2,R3,R4,R5,R13);
+	R1=4;
+	R2=ofti;
+	call MOD_3;
+	multipop(R0,R1,R2,R3,R4,R5,R13);
+
+	//invalidating the per process resource table entry
+	[pprt+2*file_desc]=-1;
+	[pprt+2*file_desc+1]=-1;
+	SP=userSP;
+	[PROCESS_TABLE+currentPID*16+9]=0;
+	[ret_add]=0;
+	ireturn;
+endif;
+
+//---------------------SEEK_SYSTEM_CALL--------------------
+if(SysCallNum==6) then
+	[PROCESS_TABLE+currentPID*16+9]=6;
+
+	alias fileDesc R3;
+	fileDesc=[[PTBR+2*((userSP-4)/512)]*512+(userSP-4)%512];
+
+	alias pprt R4;
+	pprt=[PROCESS_TABLE+currentPID*16+11]*512+496;
+
+	//if fileDesc is invalid or does not correspond to file
+	if(fileDesc<0||fileDesc>7||[pprt+2*fileDesc]!=0) then
+		[ret_add]=-1;
+		SP=userSP;
+		[PROCESS_TABLE+currentPID*16+9]=0;
+		ireturn;
+	endif;
+
+	alias ofti R5;
+	ofti=[pprt+2*fileDesc+1];
+	alias oft_entry R10;
+	oft_entry=OPEN_FILE_TABLE+4*ofti;
+
+	alias inode_index R6;
+	inode_index=[oft_entry];
+
+	//aquiring inode
+	multipush(R0,R1,R2,R3,R4,R5,R6,R10,R13);
+	R2=R1;
+	R1=5;
+	R3=inode_index;
+	call MOD_0;
+	R7=R0;
+	multipop(R0,R1,R2,R3,R4,R5,R6,R10,R13);
+	
+	alias lseek R7;
+	lseek=[oft_entry+2];
+
+	alias filesize R8;
+	alias inode_entry R11;
+	inode_entry=INODE_TABLE+inode_index*16;
+	if(inode_index==INODE_ROOT) then
+		filesize=480;
+	else
+		filesize=[inode_entry+2];
+	endif;
+
+	alias offset R9;
+	offset=[[PTBR+2*((userSP-3)/512)]*512+(userSP-3)%512];
+
+	//if offset+lseek becomes negative, release inode and return -2
+	if(lseek+offset<0) then
+
+		//releasing inode
+		multipush(R0,R1,R2,R3,R4,R5,R6,R7,R8,R9,R10,R11);
+		R2=R1;
+		R1=5;
+		R3=inode_index;
+		call MOD_0;
+		R7=R0;
+		multipop(R0,R1,R2,R3,R4,R5,R6,R7,R8,R9,R10,R11);
+
+		[ret_add]=-2;
+		SP=userSP;
+		[PROCESS_TABLE+currentPID*16+9]=0;
+		ireturn;
+	endif;
+	if(offset==0) then
+		[oft_entry+2]=0;
+	endif;
+	if(offset+lseek>filesize&&offset!=0) then
+		[oft_entry+2]=filesize;
+	endif;
+	if(((offset+lseek)<filesize)&&((offset+lseek)>=0)&&offset!=0) then
+		[oft_entry+2]=lseek+offset;
+	endif;		
+	[ret_add]=0;
+	SP=userSP;
+	[PROCESS_TABLE+currentPID*16+9]=0;
+	ireturn;
+endif;

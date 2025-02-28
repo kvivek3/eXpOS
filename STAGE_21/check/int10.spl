@@ -1,0 +1,14 @@
+//Setting mode flag to sys call number-10
+[PROCESS_TABLE + [SYSTEM_STATUS_TABLE+1]*16 + 9] = 10;
+
+//Switching to kernel stack
+[PROCESS_TABLE + [SYSTEM_STATUS_TABLE+1]*16 + 13] = SP;
+SP = [PROCESS_TABLE + [SYSTEM_STATUS_TABLE+1]*16 + 11]*512 - 1;
+
+//Calling exit process
+R1 = 3;
+R2 = [SYSTEM_STATUS_TABLE + 1];
+call MOD_1;
+
+//Calling scheduler
+call MOD_5;

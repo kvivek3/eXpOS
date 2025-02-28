@@ -1,0 +1,76 @@
+alias userSP R0;
+userSP=SP;
+alias SysCallNum R1;
+
+//switching to kernel stack
+[PROCESS_TABLE+[SYSTEM_STATUS_TABLE+1]*16+13]=SP;
+SP=[PROCESS_TABLE+[SYSTEM_STATUS_TABLE+1]*16+11]*512-1;
+
+//extracting system call number from user sp
+SysCallNum=[[PTBR+2*((userSP-5)/512)]*512+(userSP-5)%512];
+
+//------------------Wait System Call-------------------------
+if(SysCallNum==13) then
+	[PROCESS_TABLE+[SYSTEM_STATUS_TABLE+1]*16+9]=13;
+	alias PID R2;
+	PID=[[PTBR+2*((userSP-4)/512)]*512+(userSP-4)%512];
+	//process table entry
+	alias PTE R3;
+	PTE=PROCESS_TABLE+PID*16;
+	if(PID==[SYSTEM_STATUS_TABLE+1]||[PTE+4]==TERMINATED||PID>15||PID<0) then
+
+		//failure
+		[[PTBR+2*((userSP-1)/512)]*512+(userSP-1)%512]=-1;
+		[PROCESS_TABLE+[SYSTEM_STATUS_TABLE+1]*16+9]=0;
+		SP=userSP;
+		ireturn;
+	endif;
+	[PROCESS_TABLE+[SYSTEM_STATUS_TABLE+1]*16+4]=WAIT_PROCESS;
+	[PROCESS_TABLE+[SYSTEM_STATUS_TABLE+1]*16+5]=PID;
+	backup;
+	call MOD_5;
+	restore;
+	[PROCESS_TABLE+[SYSTEM_STATUS_TABLE+1]*16+9]=0;
+	[[PTBR+2*((userSP-1)/512)]*512+(userSP-1)%512]=0;
+	SP=userSP;
+	ireturn;
+endif;
+
+//-------------------------------Signal System Call--------------
+if(SysCallNum==14) then
+	[PROCESS_TABLE+[SYSTEM_STATUS_TABLE+1]*16+9]=14;
+	alias PID R2;
+	PID=1;
+	//looping through the processes and making them ready if they are waiting for the current process
+	while(PID<=15) do
+		alias PTE R3;
+		PTE=PROCESS_TABLE+PID*16;
+		if([PTE+4]==WAIT_PROCESS&&[PTE+5]==[SYSTEM_STATUS_TABLE+1]) then
+			[PTE+4]=READY;
+			[PTE+5]=-1;
+		endif;
+		PID=PID+1;
+	endwhile;
+	[[PTBR+2*((userSP-1)/512)]*512+(userSP-1)%512]=0;
+	[PROCESS_TABLE+[SYSTEM_STATUS_TABLE+1]*16+9]=0;
+	SP=userSP;
+	ireturn;
+endif;
+
+//------------------------GetPid system call----------------------
+if(SysCallNum==11) then
+	[PROCESS_TABLE+[SYSTEM_STATUS_TABLE+1]*16+9]=11;
+	[[PTBR+2*((userSP-1)/512)]*512+(userSP-1)%512]=[SYSTEM_STATUS_TABLE+1];
+	[PROCESS_TABLE+[SYSTEM_STATUS_TABLE+1]*16+9]=0;
+	SP=userSP;
+	ireturn;
+endif;
+
+//------------------------GetPPid system call----------------------
+if(SysCallNum==12) then
+	[PROCESS_TABLE+[SYSTEM_STATUS_TABLE+1]*16+9]=12;
+	[[PTBR+2*((userSP-1)/512)]*512+(userSP-1)%512]=[PROCESS_TABLE+[SYSTEM_STATUS_TABLE+1]*16+2];
+	[PROCESS_TABLE+[SYSTEM_STATUS_TABLE+1]*16+9]=0;
+	SP=userSP;
+	ireturn;
+endif;

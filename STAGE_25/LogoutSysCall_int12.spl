@@ -1,0 +1,53 @@
+alias userSP R0;
+userSP=SP;
+
+alias currentPID R1;
+currentPID=[SYSTEM_STATUS_TABLE+1];
+
+alias PTE R2;
+PTE=PROCESS_TABLE+currentPID*16;
+
+alias ret_ad R3;
+ret_ad=[PTBR+2*((userSP-1)/512)]*512+(userSP-1)%512;
+
+[PTE+9]=28;
+
+//switching to kernel stack
+[PTE+13]=SP;
+SP=[PTE+11]*512-1;
+
+//if the PID of current process is not 2, return -2 as only shell process can invoke logout system call
+if(currentPID!=2) then
+	[ret_ad]=-1;
+	[PTE+9]=0;
+	SP=userSP;
+	ireturn;
+endif;
+
+//calling kill all function of process manager module
+multipush(R0,R1,R2,R3);
+R2=R1;
+R1=5;
+call MOD_1;
+multipop(R0,R1,R2,R3);
+
+//setting the state of current process to terminated
+[PTE+4]=TERMINATED;
+
+//setting entry point for shell
+[[PTBR+16]*512]=[[PTBR+8]*512+1];
+userSP=8*512;
+[PTE+13]=userSP;
+
+//setting the state of login process to ready
+[PROCESS_TABLE+16+4]=READY;
+[SYSTEM_STATUS_TABLE]=0;
+
+//invoking the scheduler
+multipush(R0,R1,R2,R3);
+call MOD_5;
+multipop(R0,R1,R2,R3);
+
+[PROCESS_TABLE+currentPID*16+9]=0;
+
+ireturn;

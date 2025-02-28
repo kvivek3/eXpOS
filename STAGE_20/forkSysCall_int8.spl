@@ -1,0 +1,172 @@
+//system call number for fork is 8
+[PROCESS_TABLE+[SYSTEM_STATUS_TABLE+1]*16+9]=8;
+
+//switching to kernel stack
+alias userSP R0;
+userSP=SP;
+
+alias PPTBR R6;
+PPTBR=PTBR;
+alias PPID R7;
+PPID=[SYSTEM_STATUS_TABLE+1];
+
+[PROCESS_TABLE+PPID*16+13]=SP;
+SP=[PROCESS_TABLE+PPID*16+11]*512-1;
+
+//calling Get Pcb Function of process manager module
+alias freePCB_index R1;
+multipush(R0);
+R1=1;
+call MOD_1;
+freePCB_index=R0;
+multipop(R0);
+if(freePCB_index==-1) then
+	[[PPTBR+2*((userSP-1)/512)]*512+(userSP-1)%512]=-1;
+	[PROCESS_TABLE+PPID*16+9]=0;
+	SP=userSP;
+	ireturn;
+endif;
+//checking for heap pages and allocating if they are not allocated
+if([PPTBR+4]==-1) then
+	//calling get free function of memory manager module
+	multipush(R0,R1);
+	R1=1;
+	call MOD_2;
+	[PPTBR+4]=R0;
+	[PPTBR+5]="1110";
+	R1=1;
+	call MOD_2;
+	[PPTBR+6]=R0;
+	[PPTBR+7]="1110";
+	multipop(R0,R1);
+endif;
+
+//obtaining memory page for userAreaPage
+alias userAreaPage R2;
+//calling get free page of device manager module
+multipush(R0,R1);
+R1=1;
+call MOD_2;
+userAreaPage=R0;
+multipop(R0,R1);
+
+//obtaining memory pages for stack
+alias stackPage1 R3;
+alias stackPage2 R4;
+multipush(R0,R1,R2);
+R1=1;
+call MOD_2;
+stackPage1=R0;
+R1=1;
+call MOD_2;
+stackPage2=R0;
+multipop(R0,R1,R2);
+
+//userid is entry number 4 , userid of parent and child process will be same
+//[SYSTEM_STATUS_TABLE+1] hasn't changed upto now, so we can use that  
+[PROCESS_TABLE+freePCB_index*16+3]=[PROCESS_TABLE+PPID*16+3];
+
+//swap flag
+[PROCESS_TABLE+freePCB_index*16+6]=[PROCESS_TABLE+PPID*16+6];
+
+//userarea swap status
+[PROCESS_TABLE+freePCB_index*16+10]=[PROCESS_TABLE+PPID*16+10];
+
+//inode index
+[PROCESS_TABLE+freePCB_index*16+7]=[PROCESS_TABLE+PPID*16+7];
+
+//UPTR
+[PROCESS_TABLE+freePCB_index*16+13]=[PROCESS_TABLE+PPID*16+13];
+
+//MODE FLAG, KPTR, TICK fields will be set to 0
+
+//TICK
+[PROCESS_TABLE+freePCB_index*16]=0;
+
+//MODE FLAG
+[PROCESS_TABLE+freePCB_index*16+9]=0;
+
+//KPTR
+[PROCESS_TABLE+freePCB_index*16+12]=0;
+
+//PARENT PID : PPID
+[PROCESS_TABLE+freePCB_index*16+2]=PPID;
+
+//process status 
+[PROCESS_TABLE+freePCB_index*16+4]=CREATED;
+
+//userAreaPage
+[PROCESS_TABLE+freePCB_index*16+11]=userAreaPage;
+
+//coping per process resource table
+alias iter R5;
+iter=1;
+while(iter<17) do
+	[(userAreaPage+1)*512-iter]=[[ ([PROCESS_TABLE+PPID*16+11]) + 1]*512-iter];
+	iter=iter+1;
+endwhile;
+
+//coping disk map table, disk block number of code pages will be same for parent and child and heap is shared, no swapping of stack page and userAreaPage upto now for parent
+iter=0;
+while(iter<10) do
+	[DISK_MAP_TABLE+freePCB_index*10+iter]=[DISK_MAP_TABLE+PPID*10+iter];
+	iter=iter+1;
+endwhile;
+
+//page table for child process
+
+//library
+//can't use PTBR since it is changed
+[PTBR+0]=[PPTBR+0];
+[PTBR+1]=[PPTBR+1];
+[PTBR+2]=[PPTBR+2];
+[PTBR+3]=[PPTBR+3];
+
+//heap
+[PTBR+4]=[PPTBR+4];
+
+//incrementing mem_free list for corresponding pages
+[MEMORY_FREE_LIST+[PPTBR+4]]=[MEMORY_FREE_LIST+[PPTBR+4]]+1;
+
+[PTBR+5]=[PPTBR+5];
+[PTBR+6]=[PPTBR+6];
+[MEMORY_FREE_LIST+[PPTBR+6]]=[MEMORY_FREE_LIST+[PPTBR+6]]+1;
+[PTBR+7]=[PPTBR+7];
+
+//code
+iter=4;
+while(iter<8) do
+	[PTBR+2*iter]=[PPTBR+2*iter];
+	[MEMORY_FREE_LIST+[PPTBR+2*iter]]=[MEMORY_FREE_LIST+[PPTBR+2*iter]]+1;
+	[PTBR+2*iter+1]=[PPTBR+2*iter+1];
+	iter=iter+1;
+endwhile;
+
+//stack
+[PTBR+16]=stackPage1;
+[PTBR+17]="1110";
+[PTBR+18]=stackPage2;
+[PTBR+19]="1110";
+
+//copying stack content of parent to stack of child
+iter=0;
+while(iter<512) do
+	//1st stack page
+	[[PTBR+16]*512+iter]=[[PPTBR+16]*512+iter];
+	//2nd stack page
+	[[PTBR+18]*512+iter]=[[PPTBR+18]*512+iter];
+	iter=iter+1;
+endwhile;
+
+//saving BP in kernel stack, this is used to initialize BP register for child when it is scheduled for the first time	
+[userAreaPage*512]=BP;
+
+//setting up return values for parent and child
+[[PPTBR+2*((userSP-1)/512)]*512+(userSP-1)%512]=freePCB_index;
+[[PROCESS_TABLE+freePCB_index*20+2*((userSP-1)/512)]*512+(userSP-1)%512]=0;
+
+//resetting mode flag for parent
+[PROCESS_TABLE+[SYSTEM_STATUS_TABLE+1]*16+9]=0;
+
+SP=userSP;
+ireturn;

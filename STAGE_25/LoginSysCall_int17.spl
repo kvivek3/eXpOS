@@ -1,0 +1,85 @@
+alias userSP R0;
+userSP=SP;
+
+alias currentPID R1;
+currentPID=[SYSTEM_STATUS_TABLE+1];
+
+alias PTE R2;
+PTE=PROCESS_TABLE+currentPID*16;
+
+alias ret_ad R3;
+ret_ad=[PTBR+2*((userSP-1)/512)]*512+(userSP-1)%512;
+
+[PTE+9]=27;
+
+//switching to kernel stack
+[PTE+13]=SP;
+SP=[PTE+11]*512-1;
+
+//if the PID of current process is not 1, return -2 as only login process can invoke login system call
+if(currentPID!=1) then
+	[ret_ad]=-2;
+	[PTE+9]=0;
+	SP=userSP;
+	ireturn;
+endif;
+
+//username
+alias username R4;
+username=[[PTBR+2*((userSP-4)/512)]*512+(userSP-4)%512];
+
+alias userid R5;
+userid=-1;
+
+alias iter R6;
+iter=2;
+while(iter<16) do
+	if([USER_TABLE+iter*2]==username) then
+		userid=iter;
+		break;
+	endif;
+	iter=iter+1;
+endwhile;
+
+//if there is no such user, return -1
+if(userid==-1) then
+	[ret_ad]=-1;
+	[PTE+9]=0;
+	SP=userSP;
+	ireturn;
+endif;
+
+alias password R7;
+password=[[PTBR+2*((userSP-3)/512)]*512+(userSP-3)%512];
+
+//encrypt password and then match
+encrypt password;
+
+//if password do not match, return -1
+if(password!=[USER_TABLE+iter*2+1]) then
+	[ret_ad]=-1;
+	[PTE+9]=0;
+	SP=userSP;
+	ireturn;
+endif;
+
+//set the state of shell to CREATED and set the userid field in process table
+[PROCESS_TABLE+2*16+4]=CREATED;
+[PROCESS_TABLE+2*16+3]=userid;
+
+//set the state of current process as WAIT_PROCESS with pid 2
+[PTE+4]=WAIT_PROCESS;
+[PTE+5]=2;
+
+//set the userid field in the system status table 
+[SYSTEM_STATUS_TABLE]=userid;
+
+//invoking the scheduler
+multipush(R0,R1,R2,R3,R4,R5,R6,R7);
+call MOD_5;
+multipop(R0,R1,R2,R3,R4,R5,R6,R7);
+
+[ret_ad]=0;
+[PTE+9]=0;
+SP=userSP;
+ireturn;

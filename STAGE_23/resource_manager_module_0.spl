@@ -1,0 +1,148 @@
+alias functionNum R1;
+alias currentPID R2;
+
+//---------------------------AQUIRE_TERMINAL---------------------------------
+if(functionNum==8) then
+	while([TERMINAL_STATUS_TABLE]==1) do
+		//changing the state to wait_terminal
+		[PROCESS_TABLE+currentPID*16+4]=WAIT_TERMINAL;
+		multipush(R1,R2);
+
+		//calling scheduler
+		call MOD_5;
+
+		multipop(R1,R2);
+	endwhile;
+[TERMINAL_STATUS_TABLE]=1;
+[TERMINAL_STATUS_TABLE+1]=currentPID;
+return;
+endif;
+
+//-------------------------RELEASE_TERMINAL--------------------------------
+if(functionNum==9) then
+	if(currentPID!=[TERMINAL_STATUS_TABLE+1]) then
+		alias return_value R0;
+		return_value=-1;
+		return;
+	endif;
+
+	[TERMINAL_STATUS_TABLE]=0;
+	alias PID R4;
+	alias status R5;
+	PID=1;
+	while(PID<=15) do
+		status=[PROCESS_TABLE+PID*16+4];
+		if(status==WAIT_TERMINAL) then
+			[PROCESS_TABLE+PID*16+4]=READY;
+		endif;
+		PID=PID+1;
+	endwhile;
+	alias return_value R0;
+	return_value=0;
+	return;
+endif;
+
+//----------------------------------------------------------------------------
+
+//-----------------------------ACQUIRE_DISK----FUNCNUM=3-------------------------------
+if(functionNum==3) then
+	while([DISK_STATUS_TABLE]==1) do
+		[PROCESS_TABLE+currentPID*16+4]=WAIT_DISK;
+		multipush(R1,R2);
+		call MOD_5;
+		multipop(R1,R2);
+	endwhile;
+	[DISK_STATUS_TABLE]=1;
+	[DISK_STATUS_TABLE+4]=currentPID;
+	return;
+endif;
+
+//-----------------------------AQUIRE_SEMAPHORE-----FUNCNUM=6------------------------
+if(functionNum==6) then
+	alias iter R3;
+	iter=0;
+	//maximum number of semaphore is 32
+	while(iter<32) do
+		if([SEMAPHORE_TABLE+4*iter+1]==0) then
+
+			//setting PROCESS_COUMT to 1
+			[SEMAPHORE_TABLE+4*iter+1]=1;
+
+			//setting LOCKING_PID to -1
+			[SEMAPHORE_TABLE+4*iter]=-1;
+			break;
+		endif;
+		iter=iter+1;
+	endwhile;
+	if(iter==32) then
+		R0=-1;
+		return;
+	endif;
+	R0=iter;
+	return;
+endif;
+
+//--------------------------RELEASE_SEMAPHORE----------FUNCNUM=7----------------------
+if(functionNum==7) then
+	alias sema_table_index R3;
+	if([SEMAPHORE_TABLE+4*sema_table_index]==currentPID) then
+		[SEMAPHORE_TABLE+4*sema_table_index]=-1;
+		alias iter R4;
+		iter=0;
+		while(iter<16) do
+			if(([PROCESS_TABLE+iter*16+4]==WAIT_SEMAPHORE)&&([PROCESS_TABLE+iter*16+5]==sema_table_index)) then
+				[PROCESS_TABLE+iter*16+4]=READY;
+				[PROCESS_TABLE+iter*16+5]=-1;
+			endif;
+			iter=iter+1;
+		endwhile;
+	endif;
+	[SEMAPHORE_TABLE+4*sema_table_index+1]=[SEMAPHORE_TABLE+4*sema_table_index+1]-1;
+	return;
+endif;
+
+//---------------------------AQUIRE_INODE---------------------------------------
+if(functionNum==4) then
+	alias inode_index R3;
+	//looping while inode is locked
+	while([FILE_STATUS_TABLE+4*inode_index]!=-1) do
+		[PROCESS_TABLE+currentPID*16+4]=WAIT_FILE;
+		[PROCESS_TABLE+currentPID*16+5]=inode_index;
+		multipush(R1,R2,R3);
+		call MOD_5;
+		multipop(R1,R2,R3);
+	endwhile;
+
+	//if file is deleted return -1
+	if([INODE_TABLE+16*inode_index+1]==-1) then
+		R0=-1;
+		return;
+	endif;
+
+	//locking the inode
+	[FILE_STATUS_TABLE+inode_index*4]=currentPID;
+	R0=0;
+	return;
+endif;
+
+//------------------------RELEASE_INODE----------------------------------------
+if(functionNum==5) then
+	alias inode_index R3;
+	if([FILE_STATUS_TABLE+4*inode_index]!=currentPID) then 
+		R0=-1;
+		return;
+	endif;
+	[FILE_STATUS_TABLE+4*inode_index]=-1;
+	alias iter R4;
+	iter=1;
+	while(iter<15) do
+		if([PROCESS_TABLE+iter*16+4]==WAIT_DISK&&[PROCESS_TABLE+iter*16+5]==inode_index) then
+			[PROCESS_TABLE+iter*16+4]=READY;
+		endif;
+		iter=iter+1;
+	endwhile;
+	R0=0;
+	return;
+endif;
+
+

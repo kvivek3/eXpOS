@@ -1,0 +1,174 @@
+alias userSP R0;
+userSP=SP;
+
+[PROCESS_TABLE+[SYSTEM_STATUS_TABLE+1]*16+13]=SP;
+SP=[PROCESS_TABLE+[SYSTEM_STATUS_TABLE+1]*16+11]*512-1;
+
+[PROCESS_TABLE+[SYSTEM_STATUS_TABLE+1]*16+9]=9;
+
+alias filename R1;
+filename=[[PTBR+2*((userSP-4)/512)]*512+(userSP-4)%512];
+
+alias inode_index R2;
+alias iter R3;
+
+inode_index=-1;
+iter=0;
+
+while(iter<=59) do
+
+//since each enode table consist of 16 words
+
+//filetype is first word and filename 2nd word 
+	if(([INODE_TABLE+iter*16]==EXEC)&&([INODE_TABLE+iter*16+1]==filename)) then
+		inode_index=iter;
+		break;
+	endif;
+	iter=iter+1;
+endwhile;
+
+//when filename is not found or file format in not EXEC
+if(inode_index==-1) then
+	[[PTBR+2*((userSP-1)/512)]*512+(userSP-1)%512]=-1;
+	[PROCESS_TABLE+[SYSTEM_STATUS_TABLE+1]*16+9]=0;
+	SP=userSP;
+	ireturn;
+endif;
+
+multipush(R0,R1,R2,R3);
+//calling exit process in process manager module (mod_1)
+
+//function num in R1 , return in R0
+R1=3;
+ 
+R2=[SYSTEM_STATUS_TABLE+1];
+call MOD_1;
+
+multipop(R0,R1,R2,R3);
+
+alias userAreaPageNum R4;
+alias addrMemFreeListEntry R5;
+//MEMORY_FREE_LIST contains starting address of memfreelist, by increment to pagenum we can get corresponding memfreelist entry
+//each memfreelist entry contain 0 or greater representing the number of processaquiring that page
+//0 corresponds to free page
+userAreaPageNum=[PROCESS_TABLE+[SYSTEM_STATUS_TABLE+1]*16+11];
+addrMemFreeListEntry=MEMORY_FREE_LIST+userAreaPageNum;
+[addrMemFreeListEntry]=[addrMemFreeListEntry]+1;
+[SYSTEM_STATUS_TABLE+2]=[SYSTEM_STATUS_TABLE+2]-1;
+SP=userAreaPageNum*512-1;
+
+//initialising pre-process resource table
+iter=(userAreaPageNum+1)*512-17;
+while(iter<((userAreaPageNum+1)*512)) do
+	[iter]=-1;
+	iter=iter+1;
+endwhile;
+
+//setting state to running
+[PROCESS_TABLE+[SYSTEM_STATUS_TABLE+1]*16+4]=RUNNING;
+//STORING INODE INDEX
+[PROCESS_TABLE+[SYSTEM_STATUS_TABLE+1]*16+7]=inode_index;
+
+//allocating new pages and setting page table entries
+[PTBR+0]=63;
+[PTBR+1]="0100";
+[PTBR+2]=64;
+[PTBR+3]="0100";
+
+//Free page number returned by function in always stored in R6
+alias FreePage R6;
+
+
+//allocating page for heap
+multipush(R0,R1,R2,R3,R4,R5);
+//FUNCNUM FOR GETFREEPAGE IS 1
+R1=1;
+call MOD_2;
+FreePage=R0;
+multipop(R0,R1,R2,R3,R4,R5);
+[PTBR+4]=FreePage;
+[PTBR+5]="0110";
+
+multipush(R0,R1,R2,R3,R4,R5);
+//FUNCNUM FOR GETFREEPAGE IS 1
+R1=1;
+call MOD_2;
+FreePage=R0;
+multipop(R0,R1,R2,R3,R4,R5);
+[PTBR+6]=FreePage;
+[PTBR+7]="0110";
+
+//Stack
+multipush(R0,R1,R2,R3,R4,R5);
+//FUNCNUM FOR GETFREEPAGE IS 1
+R1=1;
+call MOD_2;
+FreePage=R0;
+multipop(R0,R1,R2,R3,R4,R5);
+[PTBR+16]=FreePage;
+[PTBR+17]="0110";
+
+multipush(R0,R1,R2,R3,R4,R5);
+//FUNCNUM FOR GETFREEPAGE IS 1
+R1=1;
+call MOD_2;
+FreePage=R0;
+multipop(R0,R1,R2,R3,R4,R5);
+[PTBR+18]=FreePage;
+[PTBR+19]="0110";
+
+//getting count of number of code pages
+alias count R7;
+iter=0;
+count=0;
+while(iter<4) do
+	if([INODE_TABLE+inode_index*16+8+iter]!=-1) then
+		count=count+1;
+	endif;
+	iter=iter+1;
+endwhile;
+
+//allocating memory pages for code
+iter=0;
+while(iter<count) do
+	multipush(R0,R1,R2,R3,R4,R5,R7);
+	R1=1;
+	call MOD_2;
+	FreePage=R0;
+	multipop(R0,R1,R2,R3,R4,R5,R7);
+	[PTBR+8+2*iter]=FreePage;
+	[PTBR+8+2*iter+1]="0100";
+	iter=iter+1;	
+endwhile;
+//Setting the other code pages as -1
+while(iter<4) do
+	[PTBR+8+2*iter]=-1;
+	[PTBR+8+2*iter+1]="0000";
+	iter=iter+1;
+endwhile;
+
+//loading code pages from disk to memory
+alias disk_block R8;
+alias mem_page R9;
+iter=0;
+while(iter<count) do
+	disk_block=[INODE_TABLE+16*inode_index+8+iter];
+	mem_page=[PTBR+8+2*iter];
+//calling the disk_load function in device manager
+	multipush(R0,R1,R2,R3,R4,R5,R7,R8,R9);
+	R1=2;
+	R2=[SYSTEM_STATUS_TABLE+1];
+	R3=mem_page;
+	R4=disk_block;
+	call MOD_4;
+	multipop(R0,R1,R2,R3,R4,R5,R7,R8,R9);
+	iter=iter+1;
+endwhile;
+//storing the entry point in userstack
+
+[[PTBR+16]*512]=[[PTBR+8]*512+1];
+
+//SETTING MODEFLAG TO 0 AND RETURNING TO USER STACK;
+[PROCESS_TABLE+[SYSTEM_STATUS_TABLE+1]*16+9]=0;
+SP=8*512;
+ireturn;	

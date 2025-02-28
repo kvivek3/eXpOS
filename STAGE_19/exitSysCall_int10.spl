@@ -1,0 +1,15 @@
+//invoking process state = terminated;
+[PROCESS_TABLE+[SYSTEM_STATUS_TABLE+1]*16+4]=TERMINATED;
+
+alias PID R0;
+alias state R1;
+
+PID=1;
+while(PID<=15) do
+	state=[PROCESS_TABLE+PID*16+4];
+	if(state!=TERMINATED) then
+		call MOD_5;
+	endif;
+	PID=PID+1;
+endwhile;
+halt;

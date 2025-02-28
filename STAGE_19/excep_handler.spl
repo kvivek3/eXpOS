@@ -1,0 +1,99 @@
+//setting mode flag to -1 , value corresponding to exception handler
+[PROCESS_TABLE+[SYSTEM_STATUS_TABLE+1]*16+9]=-1;
+alias currentPID R3;
+alias userSP R5;
+userSP=SP;
+currentPID=[SYSTEM_STATUS_TABLE+1];
+
+//switching to kernel stack
+[PROCESS_TABLE+[SYSTEM_STATUS_TABLE+1]*16+13]=SP;
+SP=[PROCESS_TABLE+[SYSTEM_STATUS_TABLE+1]*16+11]*512-1;
+backup;
+multipush(EIP);
+//------------------------------------------------------------------------------------
+//-----------------------------------------------------
+if((EC != 0) || (userSP== (PTLR*512-1))) then
+	if(userSP==(PTLR*512-1)) then
+		print "full US!";
+	endif;
+	if(EC==1) then
+		print "Ill. inst.";
+	endif;
+	if(EC==2) then
+		print "ill. mem.";
+	endif;
+	if(EC==3) then 
+		print "arith. ex.";
+	endif;
+	R1=3;
+	R2=[SYSTEM_STATUS_TABLE+1];
+	call MOD_1;
+	call MOD_5;
+endif;
+//------------------------------------------------------------------------------------------
+//-------------------------------------------------------------------------------------------
+	if(EPN>3&&EPN<8) then
+		//page fault is due to code page
+		alias disk_map_entry R0;
+		disk_map_entry=DISK_MAP_TABLE+[SYSTEM_STATUS_TABLE+1]*10;
+		alias diskBlockNum R1;
+		//finding disk block which to be loaded
+		diskBlockNum=[disk_map_entry+EPN];
+		//calling get code function memory of manager module and storing page in R4
+		multipush(R0,R1,R3,R5,EPN,EC,EMA,EIP);
+		//R1 contains diskBlockNum
+		R2=[SYSTEM_STATUS_TABLE+1];
+		R3=R1;
+		R1=5;
+		call MOD_2;
+		alias pageNum R4;
+		pageNum=R0;
+		multipop(R0,R1,R3,R5,EPN,EC,EMA,EIP);
+		//this is so because [SYSTEM_STATUS_TABLE+1] will be changed if page in already not allocated to any other process, see disk load
+		[PAGE_TABLE_BASE+currentPID*20+EPN*2]=pageNum;
+		[PAGE_TABLE_BASE+currentPID*20+EIP*2+1]="1100";
+	endif;
+//------------------------------------------------------------------------------------------------	
+	if(EPN==2||EPN==3) then
+		// page fault is due to heap page
+		//allocating heap pages , calling get free page memory manager module
+		alias pageNum1 R6;
+		alias pageNum2 R7;
+		multipush(R3,R5);
+		R1=1;
+		call MOD_2;
+		pageNum1=R0;
+		multipop(R3,R5);
+		[PTBR+4]=pageNum1;
+		[PTBR+5]="1110";
+		multipush(R3,R5);
+ 	        R1=1;
+        	call MOD_2;
+		pageNum2=R0;
+	        multipop(R3,R5);
+        	[PTBR+6]=pageNum2;
+	        [PTBR+7]="1110";
+	endif;
+//----------------------------------------------------------------------------------------------------------
+//----------------------------------------------	
+[PROCESS_TABLE+[SYSTEM_STATUS_TABLE+1]*16+9]=0;
+multipop(EIP);
+restore;
+SP=userSP;
+SP=SP+1;
+[[PTBR+(2*(SP/512))]*512+SP%512]=EIP;
+ireturn;
+//---------------------------------------
+//multipop(EIP);
+//restore;
+//Resetting mode flag
+//[PROCESS_TABLE + [SYSTEM_STATUS_TABLE+1]*16 + 9] = 0;
+
+//SP = [PROCESS_TABLE + ( [SYSTEM_STATUS_TABLE + 1]*16 ) + 13];
+
+//SP = SP + 1;
+//adress translation since SP has logical address
+//[ [PTBR + 2*(SP/512)] * 512 + (SP % 512)] = EIP;
+
+
+//ireturn;	

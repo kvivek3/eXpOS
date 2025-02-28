@@ -1,0 +1,41 @@
+
+//switching to kernel stack
+[PROCESS_TABLE + [SYSTEM_STATUS_TABLE+1]*16+13]=SP;
+SP=([PROCESS_TABLE+[SYSTEM_STATUS_TABLE+1]*16+11])*512-1;
+
+//saving register context of the running process
+backup;
+
+//obtaining the current process id
+alias currentPID R0;
+currentPID=[SYSTEM_STATUS_TABLE+1];
+
+//obtaining the process table entry of currently running process
+alias process_table_entry R1;
+process_table_entry=PROCESS_TABLE+currentPID*16;
+[process_table_entry+4]=READY;
+
+//scheduler
+call MOD_5;
+
+//obtaining new process id
+alias newPID R2;
+newPID=[SYSTEM_STATUS_TABLE+1];
+
+//obtaining process table entry of new process
+alias new_process_table_entry R3;
+new_process_table_entry=PROCESS_TABLE+newPID*16;
+
+//Restoring register context
+//this is needed since scheduler will save the content of PTBR,PTLR,SP of the currently running process (for this process it will be done in next cycle when its time is over)
+PTBR=[new_process_table_entry+14];
+PTLR=[new_process_table_entry+15];
+
+restore;
+
+//we can't use new_process_table_entry here because its value would have been changed, it is register R3
+SP=[PROCESS_TABLE+[SYSTEM_STATUS_TABLE+1]*16+13];
+
+//setting mode flag to 0
+[PROCESS_TABLE+[SYSTEM_STATUS_TABLE+1]*16+9]=0;
+ireturn;

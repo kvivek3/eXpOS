@@ -1,0 +1,36 @@
+alias functionNum R1;
+alias currentPID R2;
+
+//checking for function num
+if(functionNum==3) then
+multipush(R1,R2);
+
+//--------------------Aquire Terminal----------------------------
+//function num of Acquire Terminal in R1
+functionNum=8;
+
+//current PID in R2, no need to do it as r2 already contains
+currentPID=[SYSTEM_STATUS_TABLE+1];
+
+//calling resource manager
+call MOD_0;
+
+multipop(R1,R2);
+
+//printing word
+alias word R3;
+print word;
+
+//--------------------Release Terminal---------------------
+multipush(R1,R2,R3);
+
+functionNum=9;
+currentPID=[SYSTEM_STATUS_TABLE+1];
+
+call MOD_0;
+
+multipop(R1,R2,R3);
+endif;
+
+return;
+

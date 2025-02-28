@@ -1,0 +1,91 @@
+alias userSP R0;
+userSP=SP;
+alias SysCallNum R1;
+alias currentPID R2;
+currentPID=[SYSTEM_STATUS_TABLE+1];
+
+//switching to kernel stack
+[PROCESS_TABLE+currentPID*16+13]=SP;
+SP=[PROCESS_TABLE+currentPID*16+11]*512-1;
+
+//extracting system call number from usersp
+SysCallNum=[[PTBR+2*((userSP-5)/512)]*512+(userSP-5)%512];
+
+//-----------------------------SEMGET SYSTEM CALL-----------------------------
+if(SysCallNum==17) then
+	[PROCESS_TABLE+currentPID*16+9]=17;
+	alias pprt R3;
+	alias index R4;
+	index=-1;
+	pprt=([PROCESS_TABLE+currentPID*16+11]+1)*512-16;
+	alias iter R5;
+	iter=0;
+	while(iter<8) do
+		if([pprt+2*iter]==-1) then
+			index=iter;
+			break;
+		endif;
+	endwhile;
+	if(index==-1) then
+		[[PTBR+2*((userSP-1)/512)]*512+(userSP-1)%512]=-1;
+		[PROCESS_TABLE+currentPID*16+9]=0;
+		SP=userSP;
+		ireturn;
+	endif;
+
+	//setting resource identifier field to 1 (meaning semaphore)
+	[pprt+2*index]=1;
+
+	//calling acquire semaphore of resource manager module
+	alias sema_table_index R6;
+	multipush(R0,R1,R2,R3,R4,R5);
+	R1=6;
+	R2=currentPID;
+	call MOD_0;
+	sema_table_index=R0;
+	multipop(R0,R1,R2,R3,R4,R5);
+	//aquire inode fails
+	if(sema_table_index==-1) then
+		[[PTBR+2*((userSP-1)/512)]*512+(userSP-1)%512]=-2;
+                [PROCESS_TABLE+currentPID*16+9]=0;
+                SP=userSP;
+                ireturn;
+        endif;
+	[pprt+2*index+1]=sema_table_index;
+	[[PTBR+2*((userSP-1)/512)]*512+(userSP-1)%512]=index;
+        [PROCESS_TABLE+currentPID*16+9]=0;
+        SP=userSP;
+       	ireturn;
+endif;
+
+//-------------------------SEMRELEASE----------------------------
+if(SysCallNum==18) then
+	[PROCESS_TABLE+currentPID*16+9]=18;
+	alias semid R3;
+	alias pprt R4;
+	pprt=[PROCESS_TABLE+currentPID*16+11]*512+496;
+
+	//getting the semaphore descriptor id
+	semid=[[PTBR+2*((userSP-4)/512)]*512+(userSP-4)%512];
+	if(semid<0||semid>7||[pprt+2*semid]!=1) then
+		[[PTBR+2*((userSP-1)/512)]*512+(userSP-1)%512]=-1;
+        [PROCESS_TABLE+currentPID*16+9]=0;
+        SP=userSP;
+        ireturn;
+    endif;
+
+    //calling release semaphore of resource manager module
+	multipush(R0,R1,R2,R3,R4);
+	R1=7;
+	R2=currentPID;
+	R3=[pprt+2*semid+1];
+	call MOD_0;
+	multipop(R0,R1,R2,R3,R4);
+	[pprt+2*semid]=-1;
+
+	SP=userSP;
+	[PROCESS_TABLE+currentPID*16+9]=0;
+	[[PTBR+2*((userSP-1)/512)]*512+(userSP-1)%512]=0;	
+
+	ireturn;
+endif;

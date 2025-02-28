@@ -1,0 +1,61 @@
+//obtaining the pid of currently running process
+alias currentPID R0;
+currentPID=[SYSTEM_STATUS_TABLE+1];
+//saving BP since program written in expl don't save BP
+SP=SP+1;
+[SP]=BP;
+
+//obtaining the current process table entry
+alias current_process_table_entry R1;
+current_process_table_entry=PROCESS_TABLE+16*currentPID;
+
+[current_process_table_entry+12]=SP%512;
+[current_process_table_entry+14]=PTBR;
+[current_process_table_entry+15]=PTLR;
+
+alias newPID R2;
+alias new_process_table R3;
+alias new_process_state R4;
+alias PID R5;
+PID=(currentPID+1)%16;
+newPID=0;
+//finding the next process------ scheduling algorithm----------
+while(PID!=currentPID) do
+	if(PID==0) then
+		PID=(PID+1)%16;
+		continue;
+	endif;
+	new_process_table=PROCESS_TABLE+16*PID;
+	new_process_state=[new_process_table+4];
+	if(new_process_state==READY||new_process_state==CREATED) then
+		newPID=PID;
+		break;
+	endif;
+	PID=(PID+1)%16;
+endwhile;
+new_process_table=PROCESS_TABLE+16*newPID;
+
+//setting up sp to userpagearea*512+KPTR;
+SP=[new_process_table+11]*512+[new_process_table+12];
+
+//restoring PTBR,PTLR
+PTBR=[new_process_table+14];
+PTLR=[new_process_table+15];
+[SYSTEM_STATUS_TABLE+1]=newPID;
+
+//obtaining the process state of scheduled process
+new_process_state=[new_process_table+4];
+
+//CREATED STATE
+if(new_process_state==CREATED) then
+	BP=[[new_process_table+11]*512+[new_process_table+12]];
+	SP=[new_process_table+13];
+	[new_process_table+4]=RUNNING;
+	[new_process_table+9]=0;
+	ireturn;
+endif;
+//READY STATE
+[new_process_table+4]=RUNNING;
+BP=[SP];
+SP=SP-1;
+return;

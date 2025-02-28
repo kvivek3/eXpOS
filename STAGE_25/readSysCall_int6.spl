@@ -1,0 +1,147 @@
+
+//setting the mode flag of current process to system call number
+[PROCESS_TABLE+[SYSTEM_STATUS_TABLE+1]*16+9]=7;
+
+alias userSP R0;
+userSP=SP;
+
+alias currentPID R1;
+currentPID=[SYSTEM_STATUS_TABLE+1];
+//storing userstack pointer to its field in process table
+[PROCESS_TABLE+currentPID*16+13]=SP;
+SP=[PROCESS_TABLE+currentPID*16+11]*512-1;
+
+alias fileDesc R2;
+
+fileDesc=[[PTBR+2*((userSP-4)/512)]*512+((userSP-4)%512)];
+
+if(fileDesc==-1) then
+	alias word_address R3;
+	word_address=[[PTBR+2*((userSP-3)/512)]*512+((userSP-3)%512)];
+
+	//saving register context
+	multipush(R0,R1,R2,R3);
+
+	//SAVING FUNCTION NUMBER IN R1 
+	R1=TERMINAL_READ;
+
+	//PID IN R2
+	R2=[SYSTEM_STATUS_TABLE+1];
+	
+	//word address already in R3
+	
+	call MOD_4;
+
+	//restoring register context
+	multipop(R0,R1,R2,R3);
+else
+	//if fileDesc (index in pprt) is invalid, return -1
+	if(fileDesc>7||fileDesc<0) then
+		[[PTBR+2*((userSP-1)/512)]*512+(userSP-1)%512]=-1;
+		[PROCESS_TABLE+currentPID*16+9]=0;
+		SP=userSP;
+		ireturn;
+	endif;
+	alias pprt R4;
+	pprt=[PROCESS_TABLE+currentPID*16+11]*512+496;
+	//if the resource identifier does not indicate file, return -1
+	if([pprt+2*fileDesc]!=0) then
+		[[PTBR+2*((userSP-1)/512)]*512+(userSP-1)%512]=-1;
+		[PROCESS_TABLE+currentPID*16+9]=0;
+		SP=userSP;
+		ireturn;
+	endif;
+	alias ofti R5;
+	//OPEN FILE TABLE INDEX
+	ofti=[pprt+2*fileDesc+1];
+	alias inode_index R6;
+	inode_index=[OPEN_FILE_TABLE+ofti*4];
+
+
+	//calling aquire inode function of resource manager module
+	multipush(R0,R1,R2,R3,R4,R5,R6);
+	R2=currentPID;
+	R1=4;
+	R3=inode_index;
+	call MOD_0;
+
+	//storing the return value in R7
+	R7=R0;
+	multipop(R0,R1,R2,R3,R4,R5,R6);
+	//if aquire inode fails, return -1
+	if(R7==-1) then
+		[[PTBR+2*((userSP-1)/512)]*512+(userSP-1)%512]=-1;
+		[PROCESS_TABLE+currentPID*16+9]=0;
+		SP=userSP;
+		ireturn;
+	endif;
+	alias lseek_pos R7;
+	lseek_pos=[OPEN_FILE_TABLE+ofti*4+2];
+	alias memory_buffer_addr R8;
+	memory_buffer_addr=[[PTBR+2*((userSP-3)/512)]*512+((userSP-3)%512)];
+	alias memory_buffer R3;
+	memory_buffer=[PTBR+2*(memory_buffer_addr/512)]*512+(memory_buffer_addr%512);
+
+	if(inode_index==INODE_ROOT) then
+		//if pointer has reached to the end of file, release inode and return -2
+		if(lseek_pos==480) then
+
+			//releasing inode
+			multipush(R0,R1,R2,R3,R4,R5,R6,R7);
+			R2=currentPID;
+			R1=5;
+			R3=inode_index;
+			call MOD_0;
+			multipop(R0,R1,R2,R3,R4,R5,R6,R7);
+			[[PTBR+2*((userSP-1)/512)]*512+(userSP-1)%512]=-2;
+			[PROCESS_TABLE+currentPID*16+9]=0;
+			SP=userSP;
+			ireturn;
+		endif;
+		//reading from the lseek_pos
+		[memory_buffer]=[ROOT_FILE+lseek_pos];
+		[OPEN_FILE_TABLE+ofti*4+2]=[OPEN_FILE_TABLE+ofti*4+2]+1;
+	else
+		if(lseek_pos==[INODE_TABLE+inode_index*16+2]) then
+			//release inode and return -2
+			multipush(R0,R1,R2,R3,R4,R5,R6,R7);
+			R2=currentPID;
+			R1=5;
+			R3=inode_index;
+			call MOD_0;
+			multipop(R0,R1,R2,R3,R4,R5,R6,R7);
+			[[PTBR+2*((userSP-1)/512)]*512+(userSP-1)%512]=-2;
+			[PROCESS_TABLE+currentPID*16+9]=0;
+			SP=userSP;
+			ireturn;
+		endif;
+			alias block_index R8;
+			alias block_num R9;
+			alias offset R10;
+			block_index=lseek_pos/512;
+			block_num=[INODE_TABLE+inode_index*16+8+block_index];
+			offset=lseek_pos%512;
+
+			//calling buffered read to read
+			multipush(R0,R1,R2,R3,R4,R5,R6,R7,R8,R9,R10);
+			R1=2;
+			R2=block_num;
+			R4=memory_buffer;
+			R3=offset;
+			call MOD_3;
+			multipop(R0,R1,R2,R3,R4,R5,R6,R7,R8,R9,R10);
+			[OPEN_FILE_TABLE+ofti*4+2]=[OPEN_FILE_TABLE+ofti*4+2]+1;
+
+			//releasing inode by calling release inode
+			multipush(R0,R1,R2,R3,R4,R5,R6,R7,R8,R9,R10);
+			R2=currentPID;
+			R1=5;
+			R3=inode_index;
+			call MOD_0;
+			multipop(R0,R1,R2,R3,R4,R5,R6,R7,R8,R9,R10);
+	endif;
+endif;
+[[PTBR+2*((userSP-1)/512)]*512+(userSP-1)%512]=0;
+[PROCESS_TABLE+currentPID*16+9]=0;
+SP=userSP;
+ireturn;

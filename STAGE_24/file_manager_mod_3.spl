@@ -1,0 +1,181 @@
+alias functionNum R1;
+
+//----------------------------OPEN-----------------------------
+if(functionNum==3) then
+	alias filename R2;
+
+	//finding the inode index
+	alias iter R3;
+	alias inode_index R4;
+	inode_index=-1;
+	iter=0;
+	while(iter<60) do
+		if([INODE_TABLE+iter*16+1]==filename) then
+			inode_index=iter;
+			break;
+		endif;
+		iter=iter+1;
+	endwhile;
+	if(inode_index==-1) then
+		R0=-1;
+		return;
+	endif;
+
+	//calling aquire inode function of resource manager module
+	multipush(R1,R2,R3,R4);
+	R1=4;
+	R2=[SYSTEM_STATUS_TABLE+1];
+	R3=inode_index;
+	call MOD_0;
+	multipop(R1,R2,R3,R4);
+
+	//if the file is of type exec release inode and return -1
+	if([INODE_TABLE+inode_index*16]==EXEC) then
+
+		//calling release inode of resource manager module
+		multipush(R1,R2,R3,R4);
+		R1=5;
+		R2=[SYSTEM_STATUS_TABLE+1];
+		R3=inode_index;
+		call MOD_0;
+		multipop(R1,R2,R3,R4);
+		R0=-1;
+		return;
+	endif;
+
+	alias ofti R5;
+	ofti=-1;
+	//finding free entry in open file table
+	iter=0;
+	while(iter<32) do
+
+		//inode_index is first entry and is -1 in case the entry is unused
+		if([OPEN_FILE_TABLE+iter*4]==-1) then
+			ofti=iter;
+			break;
+		endif;
+		iter=iter+1;
+	endwhile;
+
+	//if no free entry is found, release inode and return -2
+	if(ofti==-1) then
+		multipush(R1,R2,R3,R4,R5);
+		R1=5;
+		R2=[SYSTEM_STATUS_TABLE+1];
+		R3=inode_index;
+		call MOD_0;
+		multipop(R1,R2,R3,R4,R5);
+		R0=-2;
+		return;
+	endif;
+
+	alias oft_entry R6;
+	alias fst_entry R7;
+	oft_entry=OPEN_FILE_TABLE+4*ofti;
+	fst_entry=FILE_STATUS_TABLE+4*inode_index;
+	if([INODE_TABLE+inode_index*16+1]==ROOT) then
+		[oft_entry]=INODE_ROOT;
+	else
+		//process count is entry no 0 of file status table and is -1 initially
+		//for the first process it will be set to 1 and for the other process it will be incremented
+		if([fst_entry+1]==-1) then
+			[fst_entry+1]=1;
+		else
+			
+			[fst_entry+1]=[fst_entry+1]+1;
+		endif;
+
+		//setting the inode index
+		[oft_entry]=inode_index;
+	endif;
+	[oft_entry+1]=1;
+	[oft_entry+2]=0;
+	multipush(R1,R2,R3,R4,R5);
+	R1=5;
+	R2=[SYSTEM_STATUS_TABLE+1];
+	R3=inode_index;
+	call MOD_0;
+	multipop(R1,R2,R3,R4,R5);
+	R0=ofti;
+	return;
+endif;
+
+//--------------------------------------CLOSE---------------------------------------
+if(functionNum==4) then
+	alias ofti R2;
+	alias inode_index R3;
+	alias oft_entry R4;
+	oft_entry=OPEN_FILE_TABLE+ofti*4;
+	//first entry is inode_index
+	inode_index=[oft_entry];
+	[oft_entry+1]=[oft_entry+1]-1;
+
+	//invalidating open file entries and modifying file status table entries in case process count becomes 0
+	//means that all process sharing that open instance have closed the file
+	if([oft_entry+1]==0) then
+		[oft_entry]=-1;
+		[oft_entry+1]=-1;
+		[oft_entry+2]=-1;
+		//if the file is not root, decrement the file open count field in file status table
+		if(inode_index!=INODE_ROOT) then
+			[FILE_STATUS_TABLE+inode_index*4+1]=[FILE_STATUS_TABLE+inode_index*4+1]-1;
+		endif;
+		if([FILE_STATUS_TABLE+inode_index*4+1]==0) then
+			[FILE_STATUS_TABLE+inode_index*4+1]=-1;
+		endif;
+	endif;
+	return;
+endif;
+
+//------------------------------------BUFFERED_READ---------------------------------------
+if(functionNum==2) then
+	alias blockNum R2;
+	alias offset R3;
+	alias memory_buffer R4;
+	alias bufferNum R5;
+
+	bufferNum=blockNum%4;
+
+	//aquiring the buffer, calling aquire buffer of resource manager module
+	multipush(R1,R2,R3,R4,R5);
+	R1=1;
+	R2=[SYSTEM_STATUS_TABLE+1];
+	R3=bufferNum;
+	call MOD_0;
+	multipop(R1,R2,R3,R4,R5);
+
+	//if the blockNumber loaded in buffer is different and dirty bit is set, write back the contents of buffer
+	if([BUFFER_TABLE+bufferNum*4]!=blockNum) then
+		if([BUFFER_TABLE+bufferNum*4+1]==1) then
+
+			//calling DISK_STORE function of device manager module
+			multipush(R1,R2,R3,R4,R5);
+			R1=1;
+			R2=[SYSTEM_STATUS_TABLE+1];
+			R3=71+bufferNum;
+			R4=[BUFFER_TABLE+bufferNum*4];
+			call MOD_4;
+			multipop(R1,R2,R3,R4,R5);
+			[BUFFER_TABLE+bufferNum*4+1]=0;
+		endif;
+		//calling DISK_LOAD function of device manager module
+		multipush(R1,R2,R3,R4,R5);
+		R4=R2;
+		R1=2;
+		R2=[SYSTEM_STATUS_TABLE+1];
+		R3=71+bufferNum;
+		call MOD_4;
+		multipop(R1,R2,R3,R4,R5);
+		[BUFFER_TABLE+4*bufferNum]=blockNum;
+	endif;
+	[memory_buffer]=[(71+bufferNum)*512+offset];
+
+	//releasing the buffer by calling RELEASE BUFFER of resource manager module
+	multipush(R1,R2,R3,R4,R5);
+	R1=2;
+	R2=[SYSTEM_STATUS_TABLE+1];
+	R3=bufferNum;
+	call MOD_0;
+	multipop(R1,R2,R3,R4,R5);
+	return;
+endif;

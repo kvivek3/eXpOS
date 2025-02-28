@@ -1,0 +1,59 @@
+
+//setting the mode flag of current process to system call number
+[PROCESS_TABLE+[SYSTEM_STATUS_TABLE+1]*16+9]=7;
+
+alias userSP R0;
+userSP=SP;
+
+//storing userstack pointer to its field in process table
+[PROCESS_TABLE+[SYSTEM_STATUS_TABLE+1]*16+13]=SP;
+SP=[PROCESS_TABLE+[SYSTEM_STATUS_TABLE+1]*16+11]*512-1;
+
+//obtaining fileDesc
+alias fileDesc R1;
+alias process_table_entry R2;
+process_table_entry=PTBR;
+
+//--------|----------physical page num-----------|-----|----offset----|
+fileDesc=[[process_table_entry+2*((userSP-4)/512)]*512+((userSP-4)%512)];
+
+if(fileDesc!=-1) then
+
+//setting return value as -1 at userSP-1
+//-------|----------physical page num-----------|-----|----offset----|
+	[[process_table_entry+2*((userSP-1)/512)]*512+((userSP-1)%512)]=-1;
+
+else
+	alias word_address R3;
+	word_address=[[process_table_entry+2*((userSP-3)/512)]*512+((userSP-3)%512)];
+
+	//saving register context
+	multipush(R0,R1,R2,R3);
+
+	//SAVING FUNCTION NUMBER IN R1 
+	fileDesc=TERMINAL_READ;
+
+	//PID IN R2
+	process_table_entry=[SYSTEM_STATUS_TABLE+1];
+	
+	//word address already in R3
+	
+	call MOD_4;
+
+	//restoring register context
+	multipop(R0,R1,R2,R3);
+
+	//SETTING RETURN VALUE AS 0
+	[[process_table_entry+2*((userSP-1)/512)]*512+((userSP-1)%512)]=0;
+endif;
+
+[PROCESS_TABLE+[SYSTEM_STATUS_TABLE+1]*16+9]=0;
+SP=userSP;
+ireturn;
+
+	
+	
+
+
+
+

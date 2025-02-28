@@ -1,0 +1,98 @@
+alias functionNum R1;
+alias currentPID R2;
+alias word R3;
+
+//---------------------------------TERMINAL_WRITE---------------------------------------------------
+//checking for function num
+if(functionNum==3) then
+multipush(R1,R2,R3);
+
+//--------------------CALLING Aquire Terminal----------------------------
+//function num of Acquire Terminal in R1
+R1=8;
+
+//current PID in R2, no need to do it as r2 already contains
+R2=[SYSTEM_STATUS_TABLE+1];
+
+//calling resource manager
+call MOD_0;
+
+multipop(R1,R2,R3);
+
+//printing word
+print word;
+
+//--------------------CALLING Release Terminal---------------------
+multipush(R1,R2,R3);
+R1=9;
+R2=currentPID;
+
+call MOD_0;
+
+multipop(R1,R2,R3);
+endif;
+//----------------------------------------------------------------------------------------------
+
+//-------------------------------TERMINAL_READ--------------------------------------------------
+if(functionNum==TERMINAL_READ) then
+	
+//------------------CALLING AQUIRE TERMINAL-----------------
+multipush(R1,R2,R3);
+
+R1=8;
+R2=currentPID;
+//calling resource manager
+
+call MOD_0;
+
+multipop(R1,R2,R3);
+read;
+[PROCESS_TABLE+currentPID*16+4]=WAIT_TERMINAL;
+
+//INVOKING THE CONTEXT SWITCH SCHEDULER
+
+multipush(R1,R2,R3);
+call MOD_5;
+multipop(R1,R2,R3);
+
+//converting logical address in R3 to physical address
+alias input_word R4;
+alias logical_address R3;
+input_word=[PROCESS_TABLE+currentPID*16+8];
+[[PAGE_TABLE_BASE+currentPID*20+2*(logical_address/512)]*512+(logical_address%512)]=input_word;
+endif;
+//----------------------------------------------------------------------------------------------------
+
+//------------------------------DISK_LOAD-----FUNCNUM=2-----------------------------------------------
+if(functionNum==DISK_LOAD) then
+
+//CALLING ACQUIRE DISK
+multipush(R1,R2,R3,R4);
+R1=3;
+R2=currentPID;
+call MOD_0;
+multipop(R1,R2,R3,R4);
+
+//setting disk status table
+
+//LOAD(0) OR STORE(1)
+[DISK_STATUS_TABLE+1]=0;
+
+//PAGE NUMBER
+[DISK_STATUS_TABLE+2]=R3;
+
+//BLOCK NUMBER
+[DISK_STATUS_TABLE+3]=R4;
+
+load(R3,R4);
+
+[PROCESS_TABLE+currentPID*16+4]=WAIT_DISK;
+
+multipush(R1,R2,R3,R4);
+call MOD_5;
+multipop(R1,R2,R3,R4);
+endif;
+//---------------------------------------------------------------------------
+
+return;
+
